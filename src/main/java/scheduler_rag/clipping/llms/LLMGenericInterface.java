@@ -1,6 +1,6 @@
 package scheduler_rag.clipping.llms;
 
-public interface LLMGenericInterface<T> {
+public interface LLMGenericInterface<String> {
 
-    T call(String prompt);
+    String call(String prompt);
 }

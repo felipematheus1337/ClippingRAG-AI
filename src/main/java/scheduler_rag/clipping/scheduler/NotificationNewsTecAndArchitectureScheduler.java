@@ -9,7 +9,7 @@ import software.amazon.awssdk.services.sns.SnsClient;
 @Component
 @RequiredArgsConstructor
 @Slf4j
-public class NotificationScheduler {
+public class NotificationNewsTecAndArchitectureScheduler {
 
     private final SnsClient snsClient;
 

@@ -24,10 +24,11 @@ public class OpenAIImpl implements LLMGenericInterface<Object> {
     }
 
     @Override
-    public Object call(Object o) {
+    public Object call(String userPrompt) {
+
         return this.client
                 .prompt()
-                .user(o.toString())
+                .user(userPrompt)
                 .call();
     }
 }

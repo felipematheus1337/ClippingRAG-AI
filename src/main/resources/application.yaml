@@ -11,7 +11,7 @@ spring:
           model: text-embedding-3-small
     vectorstore:
       pgvector:
-        initialize-schema: true   # creates the vector_store table for you
+        initialize-schema: true
         table-name: vector_store
   datasource:
     url: jdbc:postgresql://localhost:5432/clipping

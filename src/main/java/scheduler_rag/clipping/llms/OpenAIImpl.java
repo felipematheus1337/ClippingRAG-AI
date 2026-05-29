@@ -3,8 +3,11 @@ package scheduler_rag.clipping.llms;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.prompt.ChatOptions;
+import org.springframework.ai.chat.prompt.PromptTemplate;
 import org.springframework.stereotype.Component;
+import scheduler_rag.clipping.constants.PromptConstants;
 import scheduler_rag.clipping.rag.RagNotificationService;
+
 
 @Component
 @Slf4j
@@ -19,6 +22,7 @@ public class OpenAIImpl implements LLMGenericInterface<String> {
     private final ChatClient client;
     private final RagNotificationService ragNotificationService;
 
+
     public OpenAIImpl(ChatClient.Builder builder, RagNotificationService ragNotificationService) {
         this.client = builder
                 .defaultOptions(options.mutate())
@@ -29,12 +33,15 @@ public class OpenAIImpl implements LLMGenericInterface<String> {
     @Override
     public String call(String userPrompt) {
 
-        ragNotificationService.ingestPDF();
+        String context = ragNotificationService.search(userPrompt);
+
+        String finalPrompt = String.format(PromptConstants.RAG_PROMPT, context);
 
         return this.client
                 .prompt()
-                .user(userPrompt)
+                .user(finalPrompt)
                 .call()
                 .content();
     }
+
 }

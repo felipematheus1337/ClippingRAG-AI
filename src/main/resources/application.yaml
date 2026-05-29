@@ -1,3 +1,34 @@
 spring:
-  application:
-    name: clipping
+  ai:
+    openai:
+      api-key: ${OPENAI_API_KEY}
+      chat:
+        options:
+          model: gpt-4.1-mini
+          temperature: 0.0
+      embedding:
+        options:
+          model: text-embedding-3-small
+    vectorstore:
+      pgvector:
+        initialize-schema: true   # creates the vector_store table for you
+        table-name: vector_store
+  datasource:
+    url: jdbc:postgresql://localhost:5432/clipping
+    username: clipping
+    password: clipping
+
+# Spring Cloud AWS
+  cloud:
+   aws:
+    region:
+      static: us-east-1
+    credentials:
+      access-key: ${AWS_ACCESS_KEY_ID}
+      secret-key: ${AWS_SECRET_ACCESS_KEY}
+
+
+clipping:
+  sns-topic-arn: ${SNS_TOPIC_ARN}
+  schedule-cron: "0 0 7 * * *"
+kind: Application

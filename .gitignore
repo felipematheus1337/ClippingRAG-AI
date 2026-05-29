@@ -13,6 +13,7 @@ target/
 .springBeans
 .sts4-cache
 
+.claude
 .env
 
 ### IntelliJ IDEA ###

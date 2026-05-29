@@ -1,82 +1,211 @@
-# Clipping AI
+<h1 align="center">ClippingRAG-AI</h1>
 
-> A scheduled, RAG-powered daily news digest engine.
+<p align="center">
+  <strong>A scheduled, RAG-powered daily news digest engine built with Spring AI.</strong><br/>
+  Ingests documents, retrieves relevant context via vector similarity, generates AI-powered summaries and publishes them to AWS SNS.
+</p>
 
-**Clipping AI** runs on a timer, retrieves relevant context from a vector database,
-builds a grounded prompt, asks an LLM to write a topic-based summary, and publishes
-the result to an AWS SNS topic so any downstream consumer (SQS, email, Slack, etc.)
-can pick it up.
+<p align="center">
+  <img src="https://img.shields.io/badge/Java-21-007396?style=for-the-badge&logo=openjdk&logoColor=white"/>
+  <img src="https://img.shields.io/badge/Spring_Boot-3.5-6DB33F?style=for-the-badge&logo=springboot&logoColor=white"/>
+  <img src="https://img.shields.io/badge/Spring_AI-1.0-6DB33F?style=for-the-badge&logo=spring&logoColor=white"/>
+  <img src="https://img.shields.io/badge/OpenAI-GPT-412991?style=for-the-badge&logo=openai&logoColor=white"/>
+  <img src="https://img.shields.io/badge/PostgreSQL-pgvector-4169E1?style=for-the-badge&logo=postgresql&logoColor=white"/>
+  <img src="https://img.shields.io/badge/AWS-SNS-FF9900?style=for-the-badge&logo=amazonwebservices&logoColor=white"/>
+  <img src="https://img.shields.io/badge/Docker-Compose-2496ED?style=for-the-badge&logo=docker&logoColor=white"/>
+  <img src="https://img.shields.io/badge/Maven-Build-C71A36?style=for-the-badge&logo=apachemaven&logoColor=white"/>
+</p>
 
-The project is intentionally small. Its goal is to practice the two hard parts of a
-real RAG system end to end: **retrieval** (chunking, embeddings, similarity search)
-and **grounding** (building a prompt that forces the model to answer *only* from the
-retrieved context).
+---
+
+## Overview
+
+**ClippingRAG-AI** is a production-style RAG (Retrieval-Augmented Generation) pipeline that runs autonomously on a cron schedule. On each execution it:
+
+1. Ingests a source PDF into a vector database
+2. Performs a similarity search to retrieve the most relevant chunks for a given topic
+3. Injects the retrieved context into a grounded prompt sent to OpenAI
+4. Publishes the AI-generated digest to an AWS SNS topic
+5. Cleans up the ingested vectors to keep the store lean
+
+The project's purpose is to practice the two hard parts of a real RAG system end-to-end: **retrieval** (chunking, embeddings, similarity search) and **grounding** (building a prompt that forces the model to answer *only* from the retrieved context, preventing hallucinations).
 
 ---
 
 ## Architecture
 
-```
-                 (event-sns)
-   ┌─────────┐  ◄───────────────┐
-   │   SQS   │                  │
-   └─────────┘                  │ publish
-        ▲                       │
-        │ subscribes       ┌──────────┐
-   ┌─────────┐  publish     │   SNS    │
-   │  ...    │ ◄────────────│  topic   │
-   └─────────┘              └──────────┘
-                                 ▲
-                                 │ summary
-   ┌─────────────┐   context   ┌──────────┐   prompt   ┌─────────┐
-   │  Scheduler  │ ──────────► │   RAG    │ ─────────► │   LLM   │
-   │ (@Scheduled)│ ◄────────── │ (PgVector)│           │ (OpenAI)│
-   └─────────────┘  retrieved  └──────────┘            └─────────┘
-```
+<p align="center">
+  <img src="https://github.com/felipematheus1337/ClippingRAG-AI/blob/dev/assets/architecture.png?raw=true" alt="ClippingRAG-AI Architecture" width="800"/>
+</p>
 
-**Flow**
+### Flow
 
-1. The **Scheduler** fires on a cron/fixed interval.
-2. It asks the **RAG** layer for the most relevant chunks for a given topic/date
-   (similarity search against **PgVector**).
-3. Retrieved chunks are injected into a prompt template and sent to the **LLM**
-   (**OpenAI**).
-4. The generated digest is **published to an SNS topic**.
-5. SNS fans the message out to subscribers (an **SQS** queue in the diagram).
+| Step | Component | Action |
+|------|-----------|--------|
+| 1 | **Scheduler** (`@Scheduled`) | Fires on cron — triggers the pipeline |
+| 2 | **RagNotificationService** | Reads the source PDF and stores paragraphs as embeddings in PgVector |
+| 3 | **RagNotificationService** | Runs a similarity search (`topK=5`) against the vector store |
+| 4 | **OpenAIImpl** | Formats the retrieved chunks into a grounded prompt and calls GPT |
+| 5 | **SnsClient** | Publishes the generated digest to an AWS SNS topic |
+| 6 | **RagNotificationService** | Deletes the ingested vectors to avoid accumulation |
 
 ---
 
-## Tech stack
+## Tech Stack
 
-| Layer            | Choice                                            |
-|------------------|---------------------------------------------------|
-| Language / build | Java 21, Maven                                    |
-| Framework        | Spring Boot 3.5.x                                 |
-| Boilerplate      | Lombok                                            |
-| LLM + embeddings | OpenAI via Spring AI 1.0                           |
-| Vector store     | PostgreSQL + `pgvector` extension                 |
-| Messaging        | AWS SNS (producer) via Spring Cloud AWS           |
-| Scheduling       | Spring `@Scheduled`                               |
-| Local infra      | Docker / Docker Compose                           |
+| Layer | Technology |
+|-------|-----------|
+| Language / Build | Java 21 · Maven |
+| Framework | Spring Boot 3.5.x |
+| AI Orchestration | Spring AI 1.0 |
+| LLM & Embeddings | OpenAI (GPT · `text-embedding-3-small`) |
+| Vector Store | PostgreSQL + `pgvector` extension |
+| Document Ingestion | Spring AI PDF Document Reader |
+| Messaging | AWS SNS via AWS SDK v2 |
+| Scheduling | Spring `@Scheduled` (cron expression) |
+| Boilerplate Reduction | Lombok |
+| Local Infrastructure | Docker · Docker Compose |
 
 ---
 
-## What you need from AWS (to be an SNS producer)
+## Project Structure
 
-To **publish** to SNS you do **not** need to manage SQS subscriptions in code — the
-app only produces. You need three things:
+```
+src/
+└── main/java/scheduler_rag/clipping/
+    ├── ClippingApplication.java              # Entry point
+    ├── config/
+    │   └── SnsConfig.java                   # AWS SNS client bean
+    ├── constants/
+    │   └── PromptConstants.java             # RAG prompt template
+    ├── llms/
+    │   ├── LLMGenericInterface.java         # Generic LLM abstraction
+    │   └── OpenAIImpl.java                  # OpenAI ChatClient implementation
+    ├── rag/
+    │   └── RagNotificationService.java      # PDF ingestion + vector search
+    └── scheduler/
+        └── NotificationTecAndArchScheduler.java  # Orchestrates the full pipeline
+```
 
-### 1. An SNS topic
-Create a standard topic and copy its **ARN** (looks like
-`arn:aws:sns:us-east-1:123456789012:clipping-ai-digest`).
+---
+
+## Getting Started
+
+### Prerequisites
+
+- Java 21+
+- Docker & Docker Compose
+- An OpenAI API key
+- An AWS account (or LocalStack for local dev)
+
+### 1. Clone the repository
+
+```bash
+git clone https://github.com/felipematheus1337/ClippingRAG-AI.git
+cd ClippingRAG-AI
+```
+
+### 2. Place your source document
+
+Drop the PDF you want to digest at:
+
+```
+src/main/resources/docs/boletim_diario.pdf
+```
+
+### 3. Start the local infrastructure
+
+```bash
+docker compose up -d
+```
+
+This spins up:
+- **PostgreSQL** with the `pgvector` extension pre-installed
+- **LocalStack** (optional) for SNS/SQS without touching a real AWS account
+
+### 4. Set environment variables
+
+```bash
+export OPENAI_API_KEY=sk-...
+export AWS_ACCESS_KEY_ID=...
+export AWS_SECRET_ACCESS_KEY=...
+export SNS_TOPIC_ARN=arn:aws:sns:us-east-1:123456789012:clipping-ai-digest
+```
+
+> **Using LocalStack?** Point `spring.cloud.aws.endpoint` at `http://localhost:4566` in `application.yml` and use dummy credentials.
+
+### 5. Run the application
+
+```bash
+./mvnw spring-boot:run
+```
+
+The scheduler fires according to the configured cron (`0 0 7 * * *` by default — every day at 07:00). You can trigger it immediately by adjusting the cron expression for testing.
+
+---
+
+## Configuration
+
+### `application.yml`
+
+```yaml
+spring:
+  ai:
+    openai:
+      api-key: ${OPENAI_API_KEY}
+      chat:
+        options:
+          model: gpt-5.2
+          temperature: 0.99
+          top-p: 0.95
+      embedding:
+        options:
+          model: text-embedding-3-small
+    vectorstore:
+      pgvector:
+        initialize-schema: true
+        table-name: vector_store
+  datasource:
+    url: jdbc:postgresql://localhost:5432/clipping
+    username: clipping
+    password: clipping
+
+spring.cloud.aws:
+  region:
+    static: us-east-1
+  credentials:
+    access-key: ${AWS_ACCESS_KEY_ID}
+    secret-key: ${AWS_SECRET_ACCESS_KEY}
+
+clipping:
+  sns-topic-arn: ${SNS_TOPIC_ARN}
+  schedule-cron: "0 0 7 * * *"
+```
+
+### Environment Variables
+
+| Variable | Description |
+|----------|-------------|
+| `OPENAI_API_KEY` | OpenAI API key (used for chat completions and embeddings) |
+| `AWS_ACCESS_KEY_ID` | IAM access key with `sns:Publish` permission |
+| `AWS_SECRET_ACCESS_KEY` | IAM secret key |
+| `SNS_TOPIC_ARN` | ARN of the SNS topic to publish digests to |
+
+---
+
+## AWS Setup
+
+### Create an SNS Topic
 
 ```bash
 aws sns create-topic --name clipping-ai-digest
 ```
 
-### 2. Credentials with permission to publish
-Create an IAM user (or role) and attach a minimal policy. The only action the
-producer needs is `sns:Publish` on your topic ARN:
+Copy the returned ARN and export it as `SNS_TOPIC_ARN`.
+
+### Minimal IAM Policy
+
+The application only **produces** to SNS — it needs a single permission:
 
 ```json
 {
@@ -91,116 +220,11 @@ producer needs is `sns:Publish` on your topic ARN:
 }
 ```
 
-Generate an **access key / secret** for that user, or — better for anything beyond
-local dev — use an IAM role and let the default credential provider chain resolve it.
-
-### 3. A region
-e.g. `us-east-1`. SNS is regional; the topic and the client must agree.
-
-> **Tip for local development:** you can run SNS (and SQS) entirely offline with
-> **LocalStack** in Docker, so you don't touch a real AWS account while iterating.
-> Point Spring Cloud AWS at the LocalStack endpoint instead of AWS.
+Attach this policy to the IAM user or role your application authenticates with.
 
 ---
 
-## What goes in `pom.xml`
-
-Two BOMs manage versions so you don't hand-pin every artifact: the **Spring AI BOM**
-and the **Spring Cloud AWS BOM**. Then you add the starters.
-
-```xml
-<properties>
-    <java.version>21</java.version>
-    <spring-ai.version>1.0.0</spring-ai.version>
-    <spring-cloud-aws.version>3.4.0</spring-cloud-aws.version>
-</properties>
-
-<dependencyManagement>
-    <dependencies>
-        <!-- Spring AI: pulls in consistent versions for OpenAI + PgVector -->
-        <dependency>
-            <groupId>org.springframework.ai</groupId>
-            <artifactId>spring-ai-bom</artifactId>
-            <version>${spring-ai.version}</version>
-            <type>pom</type>
-            <scope>import</scope>
-        </dependency>
-
-        <!-- Spring Cloud AWS: pulls in consistent versions for SNS + AWS SDK v2 -->
-        <dependency>
-            <groupId>io.awspring.cloud</groupId>
-            <artifactId>spring-cloud-aws-dependencies</artifactId>
-            <version>${spring-cloud-aws.version}</version>
-            <type>pom</type>
-            <scope>import</scope>
-        </dependency>
-    </dependencies>
-</dependencyManagement>
-
-<dependencies>
-    <!-- Core Spring Boot -->
-    <dependency>
-        <groupId>org.springframework.boot</groupId>
-        <artifactId>spring-boot-starter-web</artifactId>
-    </dependency>
-
-    <!-- Lombok -->
-    <dependency>
-        <groupId>org.projectlombok</groupId>
-        <artifactId>lombok</artifactId>
-        <optional>true</optional>
-    </dependency>
-
-    <!-- ===== RAG: OpenAI (chat + embeddings) ===== -->
-    <dependency>
-        <groupId>org.springframework.ai</groupId>
-        <artifactId>spring-ai-starter-model-openai</artifactId>
-    </dependency>
-
-    <!-- ===== RAG: PgVector vector store ===== -->
-    <dependency>
-        <groupId>org.springframework.ai</groupId>
-        <artifactId>spring-ai-starter-vector-store-pgvector</artifactId>
-    </dependency>
-
-    <!-- Read the source PDF and split it into documents to embed -->
-    <dependency>
-        <groupId>org.springframework.ai</groupId>
-        <artifactId>spring-ai-pdf-document-reader</artifactId>
-    </dependency>
-
-    <!-- ===== SNS producer (gives you SnsTemplate) ===== -->
-    <dependency>
-        <groupId>io.awspring.cloud</groupId>
-        <artifactId>spring-cloud-aws-starter-sns</artifactId>
-    </dependency>
-
-    <!-- Postgres JDBC driver -->
-    <dependency>
-        <groupId>org.postgresql</groupId>
-        <artifactId>postgresql</artifactId>
-        <scope>runtime</scope>
-    </dependency>
-</dependencies>
-```
-
-> **Note on the SNS producer:** the single dependency that matters for *producing* is
-> `spring-cloud-aws-starter-sns`. It auto-configures a `SnsTemplate` bean. You inject
-> it and call `snsTemplate.sendNotification(topicArn, payload, subject)` — no manual
-> AWS SDK client wiring needed. The BOM (`spring-cloud-aws-dependencies`) pulls the
-> matching AWS SDK v2 transitively, so you don't list the SDK yourself.
-
-> **Version alignment:** match `spring-cloud-aws.version` to your Spring Boot line
-> (3.4.x ↔ Spring Boot 3.5.x). If you bump Spring Boot to 4.x, move Spring Cloud AWS
-> to its 4.x line. The easiest way to get a coherent set is to generate the skeleton
-> on [start.spring.io](https://start.spring.io).
-
----
-
-## Local infrastructure (Docker Compose)
-
-Postgres needs the `pgvector` extension. Use the `pgvector/pgvector` image so it's
-preinstalled:
+## Docker Compose
 
 ```yaml
 services:
@@ -215,7 +239,6 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
 
-  # Optional: SNS/SQS locally without touching AWS
   localstack:
     image: localstack/localstack:latest
     environment:
@@ -229,119 +252,43 @@ volumes:
 
 ---
 
-## Configuration (`application.yml`)
+## How It Works — Deep Dive
 
-```yaml
-spring:
-  ai:
-    openai:
-      api-key: ${OPENAI_API_KEY}
-      chat:
-        options:
-          model: gpt-4.1-mini
-          temperature: 0.0
-      embedding:
-        options:
-          model: text-embedding-3-small
-    vectorstore:
-      pgvector:
-        initialize-schema: true   # creates the vector_store table for you
-        table-name: vector_store
-  datasource:
-    url: jdbc:postgresql://localhost:5432/clipping
-    username: clipping
-    password: clipping
+### Ingestion
 
-# Spring Cloud AWS
-spring.cloud.aws:
-  region:
-    static: us-east-1
-  credentials:
-    access-key: ${AWS_ACCESS_KEY_ID}
-    secret-key: ${AWS_SECRET_ACCESS_KEY}
+`RagNotificationService.ingestPDF()` uses Spring AI's `ParagraphPdfDocumentReader` to split the PDF into paragraph-level `Document` objects. Each document is embedded via OpenAI's `text-embedding-3-small` model and stored in the `vector_store` table managed by `pgvector`.
 
-# App-specific
-clipping:
-  sns-topic-arn: ${SNS_TOPIC_ARN}
-  schedule-cron: "0 0 7 * * *"   # every day at 07:00
-```
+### Retrieval
 
-### Environment variables
+`RagNotificationService.search(query)` calls `vectorStore.similaritySearch()` with `topK=5`, returning the five most semantically similar chunks to the query string. Chunks are joined with a separator for prompt injection.
 
-| Variable                | Purpose                                  |
-|-------------------------|------------------------------------------|
-| `OPENAI_API_KEY`        | OpenAI key (chat + embeddings)           |
-| `AWS_ACCESS_KEY_ID`     | IAM access key (or use a role)           |
-| `AWS_SECRET_ACCESS_KEY` | IAM secret                               |
-| `SNS_TOPIC_ARN`         | ARN of the topic to publish to           |
+### Grounded Generation
+
+`OpenAIImpl.call()` builds the final prompt by formatting the retrieved context into `PromptConstants.RAG_PROMPT` and sends it to the GPT model via Spring AI's `ChatClient`. The model is instructed to answer **only** from the provided context, preventing hallucinations.
+
+### Cleanup
+
+After publishing, `RagNotificationService.clearDocuments(ids)` removes all ingested document vectors by ID, keeping the vector store lean across runs.
 
 ---
 
-## How it works internally
+## Roadmap
 
-- **Ingestion (one-off):** read the source PDF with the PDF document reader, split it
-  into chunks, generate embeddings, and store them in PgVector via `VectorStore`.
-- **Retrieval (per run):** the scheduler calls
-  `vectorStore.similaritySearch(...)` with a topic query and a top-k limit.
-- **Prompt assembly:** the retrieved chunks fill a `{context}` placeholder in a
-  template that instructs the model to answer *only* from that context.
-- **Generation:** `ChatClient` calls OpenAI and returns the digest.
-- **Publish:** `SnsTemplate` sends the digest to the SNS topic.
-
-### Prompt template (starting point)
-
-```
-You are the editor of Clipping AI. Using ONLY the retrieved excerpts below,
-write a daily digest about the topic "{topic}".
-
-Rules:
-- Use only information from the excerpts. If there isn't enough, say
-  "No relevant news about {topic} today."
-- Maximum 3 short paragraphs, informative newsletter tone.
-- Do not invent numbers, names, or facts not present in the context.
-
-Retrieved excerpts:
-{context}
-
-Digest for {date}:
-```
-
-The "use ONLY the excerpts" rule is what you'll iterate on — it's the difference
-between a grounded summary and a hallucinated one.
-
----
-
-## Running it
-
-```bash
-# 1. Start infra
-docker compose up -d
-
-# 2. Export your secrets
-export OPENAI_API_KEY=sk-...
-export AWS_ACCESS_KEY_ID=...
-export AWS_SECRET_ACCESS_KEY=...
-export SNS_TOPIC_ARN=arn:aws:sns:us-east-1:123456789012:clipping-ai-digest
-
-# 3. Run
-./mvnw spring-boot:run
-```
-
-On startup the app ingests the source documents into PgVector; the scheduler then
-fires on its cron and publishes a digest to SNS.
-
----
-
-## Roadmap ideas
-
-- Multiple topics per run (one digest per category).
-- Idempotency key per digest so re-runs don't double-publish.
-- Re-ranking of retrieved chunks before prompt assembly.
-- An eval suite (questions + expected answers) to measure retrieval quality.
-- Swap OpenAI for a local model without changing the rest of the pipeline.
+- [ ] Multiple topics per run (one digest per category)
+- [ ] Re-ranking of retrieved chunks before prompt assembly
+- [ ] Idempotency key per digest to prevent double-publishing on re-runs
+- [ ] Evaluation suite (questions + expected answers) to measure retrieval quality
+- [ ] Support for local models (Ollama) without changing the pipeline
+- [ ] REST endpoint to trigger digests on demand
 
 ---
 
 ## License
 
-MIT (or your choice).
+This project is open-source and available under the [MIT License](LICENSE).
+
+---
+
+<p align="center">
+  Built with Spring AI · OpenAI · PostgreSQL · AWS SNS
+</p>
